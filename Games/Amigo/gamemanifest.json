@@ -1,7 +1,7 @@
 {
   "name": "Amigo", //This should match your folder name and all of your file names
   "baseMinBet": 2, //Min bet on keypad for first floor
-  "baseMaxBet": 16, //Max bet on keypad for first floor (this will be off by 10-20 for some reason)
+  "baseMaxBet": 360, //Max bet on keypad for first floor (this will be off by 10-20 for some reason)
   "directions": [ //definse how multiple machines will spawn in a cluster
     "North",
     "South"
@@ -23,6 +23,11 @@
       "fieldName": "ResetButton",
       "source": "child",
       "targetName": "ResetButton"
+    },
+    {
+      "fieldName": "ResultTelevision",
+      "source": "child",
+      "targetName": "ResultTelevision"
     },
     {
       "fieldName": "Buttons",
@@ -59,9 +64,43 @@
       ]
     },
     {
-      "fieldName": "tv",
+      "fieldName": "Results",
       "source": "child",
-      "targetName": "TV"
+      "targetNames": [
+        "AmigoResult",
+        "AmigoResult (1)",
+        "AmigoResult (2)",
+        "AmigoResult (3)",
+        "AmigoResult (4)",
+        "AmigoResult (5)",
+        "AmigoResult (6)",
+        "AmigoResult (7)",
+        "AmigoResult (8)",
+        "AmigoResult (9)",
+        "AmigoResult (10)",
+        "AmigoResult (11)",
+        "AmigoResult (12)",
+        "AmigoResult (13)",
+        "AmigoResult (14)",
+        "AmigoResult (15)",
+        "AmigoResult (16)",
+        "AmigoResult (17)",
+        "AmigoResult (18)",
+        "AmigoResult (19)",
+        "AmigoResult (20)",
+        "AmigoResult (21)",
+        "AmigoResult (22)",
+        "AmigoResult (23)",
+        "AmigoResult (24)",
+        "AmigoResult (25)",
+        "AmigoResult (26)",
+        "AmigoResult (27)"
+      ]
+    },
+    {
+      "fieldName": "gameFeedbacks",
+      "source": "child",
+      "targetName": "Feedbacks"
     }
   ]
 }
