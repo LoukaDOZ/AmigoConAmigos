@@ -9,6 +9,7 @@ using UnityEngine.Events;
 using Extensions;
 using FMODUnity;
 using UnityEngine.Scripting;
+using BepInEx.Logging;
 
 namespace MoreGamesBase
 {
@@ -30,15 +31,15 @@ namespace MoreGamesBase
 
         private void Start()
         {
-            PlayButton.onInteractEvent.AddListener(TryStartGame);
-            ResetButton.onInteractEvent.AddListener(ResetSelection);
+            PlayButton.serverOnInteractEvent.AddListener(TryStartGame);
+            ResetButton.serverOnInteractEvent.AddListener(ResetSelection);
 
             for (int i = 0; i < Buttons.Length; i++)
             {
                 int b = i;
                 ApplyStyleSelectButton(b, false);
                 ApplyStyleSelectResult(i, false, false);
-                Buttons[i].onInteractEvent.AddListener((_) => OnButtonSelected(b));
+                Buttons[i].serverOnInteractEvent.AddListener((_) => OnButtonSelected(b));
             }
 
             buttonsCurrentBetText = transform.Find("Model/SM_Amigo_machine/Paper/Paper/Bet").gameObject.GetComponent<TextMeshPro>();
@@ -64,8 +65,8 @@ namespace MoreGamesBase
             barPlayZone = ballPlayZone;
             ballPlayZone.Expand(-new Vector3(bcBall.size.x * ball.localScale.x, bcBall.size.y * ball.localScale.y, 0f));
             barPlayZone.Expand(-new Vector3(bcBar.size.x * bar.localScale.x, 0f, 0f));
-            UpdateWinTable();
-            ResetTv();
+            InitWinTable();
+            ResetGame();
         }
 
         private void Update()
@@ -74,6 +75,7 @@ namespace MoreGamesBase
             hourText.text = $"{now:HH}";
             minutesText.text = $"{now:mm}";
             buttonsCurrentBetText.text = $"${currentBet}";
+            drawNumberText.text = gameTurn.ToString();
         }
 
         protected override bool CanGameStart()
@@ -87,7 +89,6 @@ namespace MoreGamesBase
             base.OnStartServer();
         }
 
-        int aaa = 0;
         public override void TryStartGame(PlayerInteract playerInteract)
         {
             if (isPlaying)
@@ -96,7 +97,6 @@ namespace MoreGamesBase
             base.TryStartGame(playerInteract);
         }
 
-        [Server]
         protected override void StartGame()
         {
             if (!NetworkServer.active) return;
@@ -150,8 +150,8 @@ namespace MoreGamesBase
             ShowResult(blues, yellows, () =>
             {
                 Payout(MULTIPLIERS[nbGoodBlues][nbGoodYellows], ChangeType.GameResult, null, currentBet);
-                RpcPlayGameResultFeedback(MULTIPLIERS[nbGoodBlues][nbGoodYellows]);
-                ResetGame();
+                BroadcastPlayGameResultFeedback(MULTIPLIERS[nbGoodBlues][nbGoodYellows]);
+                BroadcastResetGame();
             });
         }
 
@@ -167,8 +167,10 @@ namespace MoreGamesBase
 
         private void ResetSelection(PlayerInteract playerInteract)
         {
-            foreach (int b in _selectedButtons.ToArray())
-                RpcButtonUnselected(b);
+            if (isPlaying)
+                return;
+
+            BroadcastResetSelection();
         }
 
         private void OnButtonSelected(int i)
@@ -176,10 +178,90 @@ namespace MoreGamesBase
             if (isPlaying)
                 return;
 
+            BroadcastButtonSelected(i);
+        }
+
+        private void BroadcastButtonSelected(int i)
+        {
+            if (!NetworkServer.active) return;
+            string methodSignature = "System.Void MoreGamesBase.Amigo::UserRpcButtonSelected(System.String)";
+            int rpcHash = methodSignature.GetStableHashCode();
+
+            NetworkWriterPooled writer = NetworkWriterPool.Get();
+            writer.WriteString(i.ToString());
+            this.SendRPCInternal(methodSignature, rpcHash, writer, 0, true);
+            NetworkWriterPool.Return(writer);
+        }
+
+        private void UserRpcButtonSelected(string stri)
+        {
+            if (!NetworkClient.active) return;
+
+            int i = int.Parse(stri);
+
             if (_selectedButtons.Contains(i))
-                RpcButtonUnselected(i);
+            {
+                _selectedButtons.Remove(i);
+                ApplyStyleSelectButton(i, false);
+            }
             else if (_selectedButtons.Count < maxSelectionCount)
-                RpcButtonSelected(i);
+            {
+                _selectedButtons.Add(i);
+                ApplyStyleSelectButton(i, true);
+            }
+        }
+
+        private void BroadcastResetSelection()
+        {
+            if (!NetworkServer.active) return;
+            string methodSignature = "System.Void MoreGamesBase.Amigo::UserRpcResetSelection(System.String)";
+            int rpcHash = methodSignature.GetStableHashCode();
+
+            NetworkWriterPooled writer = NetworkWriterPool.Get();
+            writer.WriteString("");
+            this.SendRPCInternal(methodSignature, rpcHash, writer, 0, true);
+            NetworkWriterPool.Return(writer);
+        }
+
+        private void UserRpcResetSelection(string _)
+        {
+            if (!NetworkClient.active) return;
+
+            foreach (int b in _selectedButtons.ToArray())
+                ApplyStyleSelectButton(b, false);
+
+            _selectedButtons.Clear();
+        }
+
+        protected override void ResetGame()
+        {
+            if (NetworkServer.active)
+                base.ResetGame();
+
+            UpdateResultTable();
+            SetTvElementVisible(false, false, false);
+
+            for (int i = 0; i < Results.Length; i++)
+                ApplyStyleSelectResult(i, false, false);
+        }
+
+        private void BroadcastResetGame()
+        {
+            if (!NetworkServer.active) return;
+            string methodSignature = "System.Void MoreGamesBase.Amigo::UserRpcResetGame(System.String)";
+            int rpcHash = methodSignature.GetStableHashCode();
+
+            NetworkWriterPooled writer = NetworkWriterPool.Get();
+            writer.WriteString("");
+            this.SendRPCInternal(methodSignature, rpcHash, writer, 0, true);
+            NetworkWriterPool.Return(writer);
+        }
+
+        private void UserRpcResetGame(string _)
+        {
+            if (!NetworkClient.active) return;
+
+            ResetGame();
         }
 
         private static readonly double[][] MULTIPLIERS = new double[8][] {
@@ -208,31 +290,13 @@ namespace MoreGamesBase
                 Buttons[i].transform.Find("Model/Result/SelectionCross/Cross" + j).gameObject.SetActive(j == cross);
         }
 
-        [ClientRpc]
-        private void RpcButtonSelected(int i)
-        {
-            if (!NetworkClient.active) return;
-
-            _selectedButtons.Add(i);
-            ApplyStyleSelectButton(i, true);
-        }
-
-        [ClientRpc]
-        private void RpcButtonUnselected(int i)
-        {
-            if (!NetworkClient.active) return;
-
-            _selectedButtons.Remove(i);
-            ApplyStyleSelectButton(i, false);
-        }
-
 
         /// Results
 
         private TextMeshPro winCurrentGains;
         private Transform winSelection;
 
-        private void UpdateWinTable()
+        private void InitWinTable()
         {
             winCurrentGains.text = $"${currentBet}";
 
@@ -250,12 +314,8 @@ namespace MoreGamesBase
             }
         }
 
-        private void RpcUpdateSelectedWin(bool show, int nbBlue = -1, int nbYellow = -1)
+        private void UpdateResultTable(int nbBlue = -1, int nbYellow = -1)
         {
-            if (!NetworkClient.active) return;
-
-            winSelection.gameObject.SetActive(show && nbBlue + nbYellow >= 4);
-
             if (nbBlue != -1 && nbYellow != -1)
             {
                 winCurrentGains.text = "$" + (currentBet * MULTIPLIERS[nbBlue][nbYellow]).ToString();
@@ -266,10 +326,36 @@ namespace MoreGamesBase
                     Vector3 tmp = winSelection.localPosition;
                     winSelection.parent = transform.Find($"Model/SM_Amigo_machine/Paper/PossibleWin/Good{nbBlue + ny}/Line{nbBlue}{ny}").gameObject.transform;
                     winSelection.localPosition = tmp;
+                    winSelection.gameObject.SetActive(true);
                 }
             }
             else
+            {
+                winSelection.gameObject.SetActive(false);
                 winCurrentGains.text = "$0";
+            }
+        }
+
+        private void BroadcastUpdateResultTable(int goodBlue, int goodYellow)
+        {
+            if (!NetworkServer.active) return;
+            string methodSignature = "System.Void MoreGamesBase.Amigo::UserRpcUpdateResultTable(System.String)";
+            int rpcHash = methodSignature.GetStableHashCode();
+
+            NetworkWriterPooled writer = NetworkWriterPool.Get();
+            writer.WriteString($"{goodBlue}:{goodYellow}");
+            this.SendRPCInternal(methodSignature, rpcHash, writer, 0, true);
+            NetworkWriterPool.Return(writer);
+        }
+
+        private void UserRpcUpdateResultTable(string message)
+        {
+            if (!NetworkClient.active) return;
+
+            string[] data = message.Split(':');
+            int goodBlue = int.Parse(data[0]);
+            int goodYellow = int.Parse(data[1]);
+            UpdateResultTable(goodBlue, goodYellow);
         }
 
         private void ApplyStyleSelectResult(int i, bool selected, bool blue)
@@ -279,19 +365,33 @@ namespace MoreGamesBase
             Results[i].transform.Find("Model/Result/Yellow").gameObject.SetActive(selected && !blue);
         }
 
-        [ClientRpc]
-        private void RpcSelectResult(int i, bool isSelected, bool blue)
+        private void BroadcastSelectResult(int i, bool blue)
+        {
+            if (!NetworkServer.active) return;
+            string methodSignature = "System.Void MoreGamesBase.Amigo::UserRpcSelectResult(System.String)";
+            int rpcHash = methodSignature.GetStableHashCode();
+
+            NetworkWriterPooled writer = NetworkWriterPool.Get();
+            writer.WriteString($"{i}:{blue}");
+            this.SendRPCInternal(methodSignature, rpcHash, writer, 0, true);
+            NetworkWriterPool.Return(writer);
+        }
+
+        private void UserRpcSelectResult(string message)
         {
             if (!NetworkClient.active) return;
 
-            ApplyStyleSelectResult(i, isSelected, blue);
+            string[] data = message.Split(':');
+            int i = int.Parse(data[0]);
+            bool blue = bool.Parse(data[1]);
+            ApplyStyleSelectResult(i, true, blue);
         }
 
         /// ResultTelevision
 
         public GameObject[] Results;
         public float breakDelay = .5f;
-        public float ballSpeed = 3f;
+        public float ballSpeed = 3.5f;
         public float minMaxAngle = 10f;
         public int minBounce = 6;
         public int maxBounce = 12;
@@ -311,8 +411,6 @@ namespace MoreGamesBase
         {
             BallPath[] bluePaths = new BallPath[blueResults.Length];
             BallPath[] yellowPaths = new BallPath[yellowResults.Length];
-
-            drawNumberText.text = (++currentDraw).ToString();
 
             for (int i = 0; i < blueResults.Length; i++)
             {
@@ -408,9 +506,8 @@ namespace MoreGamesBase
 
             foreach (BallPath p in bluePaths)
             {
-                RpcMoveBall(p.path[0]);
-                RpcMoveBar(ball.localPosition.x, true);
-                RpcSetTvElementsVisible(true, true, false);
+                BroadcastMoveBall(p.path[0]);
+                BroadcastSetTvElementVisible(true, true, false);
                 yield return new WaitForSeconds(breakDelay);
 
                 for (int i = 1; i < p.path.Length; i++)
@@ -419,16 +516,15 @@ namespace MoreGamesBase
 
                     while (Vector3.Distance(ball.localPosition, target) > 0.001f)
                     {
-                        RpcMoveBall(Vector3.MoveTowards(ball.localPosition, target, ballSpeed * Time.deltaTime));
-                        RpcMoveBar(ball.localPosition.x, true);
+                        BroadcastMoveBall(Vector3.MoveTowards(ball.localPosition, target, ballSpeed * Time.deltaTime));
                         yield return null;
                     }
                 }
 
                 nbGoodBlue += p.result.win ? 1 : 0;
-                RpcUpdateSelectedWin(true, nbGoodBlue, nbGoodYellow);
-                RpcSelectResult(p.result.id, true, true);
-                RpcSetTvElementsVisible(false, true, false);
+                BroadcastUpdateResultTable(nbGoodBlue, nbGoodYellow);
+                BroadcastSelectResult(p.result.id, true);
+                BroadcastSetTvElementVisible(false, true, false);
                 yield return new WaitForSeconds(breakDelay);
             }
 
@@ -436,9 +532,8 @@ namespace MoreGamesBase
 
             foreach (BallPath p in yellowPaths)
             {
-                RpcMoveBall(p.path[0]);
-                RpcMoveBar(ball.localPosition.x, false);
-                RpcSetTvElementsVisible(true, false, true);
+                BroadcastMoveBall(p.path[0]);
+                BroadcastSetTvElementVisible(true, false, true);
                 yield return new WaitForSeconds(breakDelay);
 
                 for (int i = 1; i < p.path.Length; i++)
@@ -447,57 +542,81 @@ namespace MoreGamesBase
 
                     while (Vector3.Distance(ball.localPosition, target) > 0.001f)
                     {
-                        RpcMoveBall(Vector3.MoveTowards(ball.localPosition, target, ballSpeed * Time.deltaTime));
-                        RpcMoveBar(ball.localPosition.x, false);
+                        BroadcastMoveBall(Vector3.MoveTowards(ball.localPosition, target, ballSpeed * Time.deltaTime));
                         yield return null;
                     }
                 }
 
                 nbGoodYellow += p.result.win ? 1 : 0;
-                RpcUpdateSelectedWin(true, nbGoodBlue, nbGoodYellow);
-                RpcSelectResult(p.result.id, true, false);
-                RpcSetTvElementsVisible(false, false, true);
+                BroadcastUpdateResultTable(nbGoodBlue, nbGoodYellow);
+                BroadcastSelectResult(p.result.id, false);
+                BroadcastSetTvElementVisible(false, false, true);
                 yield return new WaitForSeconds(breakDelay);
             }
 
-            yield return new WaitForSeconds(breakDelay * 2);
+            yield return new WaitForSeconds(breakDelay);
             callback();
-            ResetTv();
         }
 
-        public void ResetTv()
+        private void BroadcastSetTvElementVisible(bool ballVisible = false, bool blueBarVisible = false, bool yellowBarVisible = false)
         {
-            RpcUpdateSelectedWin(false);
-            RpcSetTvElementsVisible(false, false, false);
+            if (!NetworkServer.active) return;
+            string methodSignature = "System.Void MoreGamesBase.Amigo::UserRpcSetTvElementVisible(System.String)";
+            int rpcHash = methodSignature.GetStableHashCode();
 
-            for (int i = 0; i < Results.Length; i++)
-                RpcSelectResult(i, false, false);
+            NetworkWriterPooled writer = NetworkWriterPool.Get();
+            writer.WriteString($"{ballVisible}:{blueBarVisible}:{yellowBarVisible}");
+            this.SendRPCInternal(methodSignature, rpcHash, writer, 0, true);
+            NetworkWriterPool.Return(writer);
         }
 
-        [ClientRpc]
-        public void RpcSetTvElementsVisible(bool ballVisible = false, bool blueBarVisible = false, bool yellowBarVisible = false)
+        public void UserRpcSetTvElementVisible(string message)
         {
             if (!NetworkClient.active) return;
 
+            string[] data = message.Split(':');
+            bool ballVisible = bool.Parse(data[0]);
+            bool blueBarVisible = bool.Parse(data[1]);
+            bool yellowBarVisible = bool.Parse(data[2]);
+
+            SetTvElementVisible(ballVisible, blueBarVisible, yellowBarVisible);
+        }
+
+        public void SetTvElementVisible(bool ballVisible = false, bool blueBarVisible = false, bool yellowBarVisible = false)
+        {
             ball.gameObject.SetActive(ballVisible);
             blueBar.SetActive(blueBarVisible);
             yellowBar.SetActive(yellowBarVisible);
         }
 
-        [ClientRpc]
-        public void RpcMoveBall(Vector3 pos)
+        private void BroadcastMoveBall(Vector3 pos)
         {
-            if (!NetworkClient.active) return;
+            if (!NetworkServer.active) return;
+            string methodSignature = "System.Void MoreGamesBase.Amigo::UserRpcMoveBall(System.String)";
+            int rpcHash = methodSignature.GetStableHashCode();
 
-            ball.localPosition = pos;
+            NetworkWriterPooled writer = NetworkWriterPool.Get();
+            writer.WriteString($"{pos.x}:{pos.y}:{pos.z}");
+            this.SendRPCInternal(methodSignature, rpcHash, writer, 0, true);
+            NetworkWriterPool.Return(writer);
         }
 
-        [ClientRpc]
-        public void RpcMoveBar(float x, bool blue)
+        public void UserRpcMoveBall(string message)
         {
             if (!NetworkClient.active) return;
 
-            bar.localPosition = new Vector3(Mathf.Clamp(x, barPlayZone.min.x, barPlayZone.max.x), bar.localPosition.y, bar.localPosition.z);
+            string[] data = message.Split(':');
+            float x = float.Parse(data[0]);
+            float y = float.Parse(data[1]);
+            float z = float.Parse(data[2]);
+
+            MoveBall(new Vector3(x, y, z));
+        }
+
+        public void MoveBall(Vector3 pos)
+        {
+            ball.localPosition = pos;
+            bar.localPosition = new Vector3(Mathf.Clamp(pos.x, barPlayZone.min.x, barPlayZone.max.x), bar.localPosition.y, bar.localPosition.z);
         }
 
         private class Result
@@ -526,8 +645,26 @@ namespace MoreGamesBase
         [SerializeField]
         private EventReference tieSFX;
 
-        [ClientRpc]
-        private void RpcPlayGameResultFeedback(double multiplier)
+        private void BroadcastPlayGameResultFeedback(double multiplier)
+        {
+            if (!NetworkServer.active) return;
+            string methodSignature = "System.Void MoreGamesBase.Amigo::UserRpcPlayGameResultFeedback(System.String)";
+            int rpcHash = methodSignature.GetStableHashCode();
+
+            NetworkWriterPooled writer = NetworkWriterPool.Get();
+            writer.WriteString(multiplier.ToString());
+            this.SendRPCInternal(methodSignature, rpcHash, writer, 0, true);
+            NetworkWriterPool.Return(writer);
+        }
+
+        public void UserRpcPlayGameResultFeedback(string message)
+        {
+            if (!NetworkClient.active) return;
+
+            PlayGameResultFeedback(double.Parse(message));
+        }
+
+        private void PlayGameResultFeedback(double multiplier)
         {
             if (multiplier < 1.0)
             {
@@ -550,7 +687,7 @@ namespace MoreGamesBase
 
 namespace AmigoMod
 {
-    [BepInPlugin("com.kit2soin.amigo", "Amigo", "1.0.0")]
+    [BepInPlugin("com.kit2soin.amigo", "Amigo", "2.0.0")]
     [BepInDependency("com.moregames.base", BepInDependency.DependencyFlags.HardDependency)]
     public class AmigoPlugin : BaseUnityPlugin
     {
